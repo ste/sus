@@ -1,6 +1,6 @@
 # sus
 
-Investigation toolkit for researching suspicious companies, corporate networks, and dodgy links between entities. Built on [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with skills, agents, and a shell wrapper around the Companies House API.
+Investigation toolkit for researching suspicious companies, corporate networks, and dodgy links between entities. Built on [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with skills, agents, and a Python wrapper around the Companies House API.
 
 ## Quick Start
 
@@ -32,7 +32,7 @@ Or invoke the spider agent directly:
   agents/
     company-spider.md  — Recursive company network mapper
 bin/
-  ch                   — Companies House API wrapper (curl + jq)
+  ch                   — Companies House API wrapper (Python 3, stdlib only)
 data/                  — Local investigation data (gitignored)
 output/                — Generated reports and visualisations (gitignored)
 ```
@@ -53,7 +53,7 @@ Agents are autonomous workflows that Claude runs end-to-end.
 
 ### bin/ch
 
-Shell script wrapping the [Companies House API](https://developer.company-information.service.gov.uk/). Handles authentication, pagination, URL encoding, and error handling. No runtime dependencies beyond curl and jq.
+Python script wrapping the [Companies House API](https://developer.company-information.service.gov.uk/). Handles authentication, pagination, URL encoding, rate limit retry, and error handling. Uses only the Python standard library — no pip install needed.
 
 ```
 bin/ch search "company name"        # Search companies
@@ -74,7 +74,7 @@ bin/ch help                         # Full command list
    COMPANIES_HOUSE_API_KEY=your_key_here
    ```
 
-Requires curl and jq (both standard on macOS).
+Requires Python 3 (standard on macOS).
 
 ## Data
 

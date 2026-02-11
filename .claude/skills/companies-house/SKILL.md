@@ -10,7 +10,7 @@ Query UK company data using the `bin/ch` wrapper script. This handles authentica
 ## Prerequisites
 
 - API key must be set in `.env` as `COMPANIES_HOUSE_API_KEY=...`
-- The script uses curl and jq (both available on this system)
+- Python 3 (no external dependencies — uses only stdlib)
 
 ## Commands
 

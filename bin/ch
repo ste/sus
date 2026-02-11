@@ -1,180 +1,184 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env python3
+"""Companies House API wrapper."""
 
-# Companies House API wrapper
-# Usage: ch <command> [args...]
-# API key read from .env file (COMPANIES_HOUSE_API_KEY=...)
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from base64 import b64encode
+from pathlib import Path
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-BASE_URL="https://api.company-information.service.gov.uk"
+BASE_URL = "https://api.company-information.service.gov.uk"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+MAX_RETRIES = 3
+RETRY_DELAY = 2
 
-# Load API key
-load_key() {
-  local env_file="$PROJECT_ROOT/.env"
-  if [[ ! -f "$env_file" ]]; then
-    echo "Error: No .env file found at $env_file" >&2
-    echo "Create one with: COMPANIES_HOUSE_API_KEY=your_key_here" >&2
-    exit 1
-  fi
-  COMPANIES_HOUSE_API_KEY=$(grep -E '^COMPANIES_HOUSE_API_KEY=' "$env_file" | cut -d= -f2- | tr -d '"' | tr -d "'")
-  if [[ -z "$COMPANIES_HOUSE_API_KEY" ]]; then
-    echo "Error: COMPANIES_HOUSE_API_KEY not found in .env" >&2
-    exit 1
-  fi
-}
 
-# Make an authenticated GET request
-api_get() {
-  local path="$1"
-  shift
-  local url="${BASE_URL}${path}"
+def load_key():
+    env_file = PROJECT_ROOT / ".env"
+    if not env_file.exists():
+        print(f"Error: No .env file found at {env_file}", file=sys.stderr)
+        print("Create one with: COMPANIES_HOUSE_API_KEY=your_key_here", file=sys.stderr)
+        sys.exit(1)
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("COMPANIES_HOUSE_API_KEY="):
+            return line.split("=", 1)[1].strip().strip("\"'")
+    print("Error: COMPANIES_HOUSE_API_KEY not found in .env", file=sys.stderr)
+    sys.exit(1)
 
-  # Append query params if any
-  if [[ $# -gt 0 ]]; then
-    local params="$1"
-    url="${url}?${params}"
-  fi
 
-  local http_code
-  local response
-  local tmpfile
-  tmpfile=$(mktemp)
+def api_get(api_key, path, params=None):
+    url = BASE_URL + path
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
 
-  http_code=$(curl -s -w '%{http_code}' -o "$tmpfile" \
-    -u "${COMPANIES_HOUSE_API_KEY}:" \
-    -H "Accept: application/json" \
-    "$url")
+    auth = b64encode(f"{api_key}:".encode()).decode()
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Basic {auth}",
+        "Accept": "application/json",
+    })
 
-  if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
-    jq . "$tmpfile" 2>/dev/null || cat "$tmpfile"
-  elif [[ "$http_code" == "404" ]]; then
-    echo "{\"error\": \"not_found\", \"path\": \"$path\"}" >&2
-    rm -f "$tmpfile"
-    return 1
-  elif [[ "$http_code" == "429" ]]; then
-    echo "{\"error\": \"rate_limited\", \"message\": \"Too many requests — wait and retry\"}" >&2
-    rm -f "$tmpfile"
-    return 1
-  else
-    echo "{\"error\": \"api_error\", \"status\": $http_code, \"body\": $(cat "$tmpfile" | jq -R -s '.')}" >&2
-    rm -f "$tmpfile"
-    return 1
-  fi
+    for attempt in range(MAX_RETRIES):
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(RETRY_DELAY)
+                    continue
+                print(json.dumps({"error": "rate_limited", "message": "Too many requests — retries exhausted"}), file=sys.stderr)
+                sys.exit(1)
+            elif e.code == 404:
+                print(json.dumps({"error": "not_found", "path": path}), file=sys.stderr)
+                sys.exit(1)
+            else:
+                body = e.read().decode(errors="replace")
+                print(json.dumps({"error": "api_error", "status": e.code, "body": body}), file=sys.stderr)
+                sys.exit(1)
 
-  rm -f "$tmpfile"
-}
 
-# Paginate through all results for a list endpoint
-api_get_all() {
-  local path="$1"
-  local extra_params="${2:-}"
-  local start=0
-  local page_size=100
-  local all_items="[]"
+def api_get_all(api_key, path, extra_params=None):
+    start = 0
+    page_size = 100
+    all_items = []
 
-  while true; do
-    local params="items_per_page=${page_size}&start_index=${start}"
-    if [[ -n "$extra_params" ]]; then
-      params="${params}&${extra_params}"
-    fi
+    while True:
+        params = {"items_per_page": page_size, "start_index": start}
+        if extra_params:
+            params.update(extra_params)
 
-    local result
-    result=$(api_get "$path" "$params") || return 1
+        result = api_get(api_key, path, params)
+        items = result.get("items", [])
+        if not items:
+            break
 
-    local items
-    items=$(echo "$result" | jq '.items // []')
-    local count
-    count=$(echo "$items" | jq 'length')
+        all_items.extend(items)
+        total = result.get("total_results") or result.get("total_count") or 0
+        start += len(items)
+        if start >= total:
+            break
 
-    if [[ "$count" -eq 0 ]]; then
-      break
-    fi
+    return all_items
 
-    all_items=$(echo "$all_items" "$items" | jq -s '.[0] + .[1]')
-    local total
-    total=$(echo "$result" | jq '.total_results // .total_count // 0')
 
-    start=$((start + count))
-    if [[ "$start" -ge "$total" ]]; then
-      break
-    fi
-  done
+def output(data):
+    print(json.dumps(data, indent=2, ensure_ascii=False))
 
-  echo "$all_items"
-}
 
 # --- Commands ---
 
-cmd_search() {
-  local query="$1"
-  api_get "/search/companies" "q=$(printf '%s' "$query" | jq -sRr @uri)&items_per_page=20"
+def cmd_search(api_key, args):
+    if not args:
+        print("Usage: ch search <query>", file=sys.stderr); sys.exit(1)
+    output(api_get(api_key, "/search/companies", {"q": " ".join(args), "items_per_page": 20}))
+
+
+def cmd_profile(api_key, args):
+    if not args:
+        print("Usage: ch profile <company_number>", file=sys.stderr); sys.exit(1)
+    output(api_get(api_key, f"/company/{args[0]}"))
+
+
+def cmd_officers(api_key, args):
+    if not args:
+        print("Usage: ch officers <company_number> [current]", file=sys.stderr); sys.exit(1)
+    extra = {}
+    if len(args) > 1 and args[1] == "current":
+        extra = {"register_type": "directors", "register_view": "true"}
+    output(api_get_all(api_key, f"/company/{args[0]}/officers", extra or None))
+
+
+def cmd_pscs(api_key, args):
+    if not args:
+        print("Usage: ch pscs <company_number>", file=sys.stderr); sys.exit(1)
+    output(api_get_all(api_key, f"/company/{args[0]}/persons-with-significant-control"))
+
+
+def cmd_filings(api_key, args):
+    if not args:
+        print("Usage: ch filings <company_number> [category]", file=sys.stderr); sys.exit(1)
+    params = {"items_per_page": 50}
+    if len(args) > 1:
+        params["category"] = args[1]
+    output(api_get(api_key, f"/company/{args[0]}/filing-history", params))
+
+
+def cmd_charges(api_key, args):
+    if not args:
+        print("Usage: ch charges <company_number>", file=sys.stderr); sys.exit(1)
+    output(api_get_all(api_key, f"/company/{args[0]}/charges"))
+
+
+def cmd_insolvency(api_key, args):
+    if not args:
+        print("Usage: ch insolvency <company_number>", file=sys.stderr); sys.exit(1)
+    output(api_get(api_key, f"/company/{args[0]}/insolvency"))
+
+
+def cmd_appointments(api_key, args):
+    if not args:
+        print("Usage: ch appointments <officer_id>", file=sys.stderr); sys.exit(1)
+    output(api_get_all(api_key, f"/officers/{args[0]}/appointments"))
+
+
+def cmd_search_officers(api_key, args):
+    if not args:
+        print("Usage: ch search-officers <name>", file=sys.stderr); sys.exit(1)
+    output(api_get(api_key, "/search/officers", {"q": " ".join(args), "items_per_page": 20}))
+
+
+def cmd_search_disqualified(api_key, args):
+    if not args:
+        print("Usage: ch search-disqualified <name>", file=sys.stderr); sys.exit(1)
+    output(api_get(api_key, "/search/disqualified-officers", {"q": " ".join(args), "items_per_page": 20}))
+
+
+def cmd_registered_office(api_key, args):
+    if not args:
+        print("Usage: ch registered-office <company_number>", file=sys.stderr); sys.exit(1)
+    output(api_get(api_key, f"/company/{args[0]}/registered-office-address"))
+
+
+COMMANDS = {
+    "search": cmd_search,
+    "profile": cmd_profile,
+    "officers": cmd_officers,
+    "pscs": cmd_pscs,
+    "filings": cmd_filings,
+    "charges": cmd_charges,
+    "insolvency": cmd_insolvency,
+    "appointments": cmd_appointments,
+    "search-officers": cmd_search_officers,
+    "search-disqualified": cmd_search_disqualified,
+    "registered-office": cmd_registered_office,
 }
 
-cmd_profile() {
-  local number="$1"
-  api_get "/company/$number"
-}
-
-cmd_officers() {
-  local number="$1"
-  local register_type="${2:-}"
-  if [[ "$register_type" == "current" ]]; then
-    api_get_all "/company/$number/officers" "register_type=directors&register_view=true"
-  else
-    api_get_all "/company/$number/officers"
-  fi
-}
-
-cmd_pscs() {
-  local number="$1"
-  api_get_all "/company/$number/persons-with-significant-control"
-}
-
-cmd_filings() {
-  local number="$1"
-  local category="${2:-}"
-  if [[ -n "$category" ]]; then
-    api_get "/company/$number/filing-history" "items_per_page=50&category=$category"
-  else
-    api_get "/company/$number/filing-history" "items_per_page=50"
-  fi
-}
-
-cmd_charges() {
-  local number="$1"
-  api_get_all "/company/$number/charges"
-}
-
-cmd_insolvency() {
-  local number="$1"
-  api_get "/company/$number/insolvency"
-}
-
-cmd_appointments() {
-  local officer_id="$1"
-  api_get_all "/officers/$officer_id/appointments"
-}
-
-cmd_search_officers() {
-  local query="$1"
-  api_get "/search/officers" "q=$(printf '%s' "$query" | jq -sRr @uri)&items_per_page=20"
-}
-
-cmd_search_disqualified() {
-  local query="$1"
-  api_get "/search/disqualified-officers" "q=$(printf '%s' "$query" | jq -sRr @uri)&items_per_page=20"
-}
-
-cmd_registered_office() {
-  local number="$1"
-  api_get "/company/$number/registered-office-address"
-}
-
-# --- Main ---
-
-usage() {
-  cat <<'USAGE'
+USAGE = """\
 Usage: ch <command> [args...]
 
 Commands:
@@ -182,7 +186,7 @@ Commands:
   profile <number>                Get company profile
   officers <number> [current]     List officers (optionally current only)
   pscs <number>                   List persons with significant control
-  filings <number> [category]     Get filing history (categories: accounts, confirmation-statement, etc.)
+  filings <number> [category]     Get filing history
   charges <number>                Get charges/mortgages
   insolvency <number>             Get insolvency information
   appointments <officer_id>       Get all appointments for an officer
@@ -190,77 +194,29 @@ Commands:
   search-disqualified <name>      Search disqualified officers
   registered-office <number>      Get registered office address
 
-API key is read from .env file (COMPANIES_HOUSE_API_KEY=...)
-USAGE
-}
+API key is read from .env file (COMPANIES_HOUSE_API_KEY=...)"""
 
-if [[ $# -lt 1 ]]; then
-  usage
-  exit 1
-fi
 
-command="$1"
-shift
+def main():
+    if len(sys.argv) < 2:
+        print(USAGE)
+        sys.exit(1)
 
-# Help doesn't need an API key
-if [[ "$command" == "help" || "$command" == "--help" || "$command" == "-h" ]]; then
-  usage
-  exit 0
-fi
+    command = sys.argv[1]
+    args = sys.argv[2:]
 
-load_key
+    if command in ("help", "--help", "-h"):
+        print(USAGE)
+        sys.exit(0)
 
-case "$command" in
-  search)
-    [[ $# -lt 1 ]] && { echo "Usage: ch search <query>" >&2; exit 1; }
-    cmd_search "$*"
-    ;;
-  profile)
-    [[ $# -lt 1 ]] && { echo "Usage: ch profile <company_number>" >&2; exit 1; }
-    cmd_profile "$1"
-    ;;
-  officers)
-    [[ $# -lt 1 ]] && { echo "Usage: ch officers <company_number> [current]" >&2; exit 1; }
-    cmd_officers "$1" "${2:-}"
-    ;;
-  pscs)
-    [[ $# -lt 1 ]] && { echo "Usage: ch pscs <company_number>" >&2; exit 1; }
-    cmd_pscs "$1"
-    ;;
-  filings)
-    [[ $# -lt 1 ]] && { echo "Usage: ch filings <company_number> [category]" >&2; exit 1; }
-    cmd_filings "$1" "${2:-}"
-    ;;
-  charges)
-    [[ $# -lt 1 ]] && { echo "Usage: ch charges <company_number>" >&2; exit 1; }
-    cmd_charges "$1"
-    ;;
-  insolvency)
-    [[ $# -lt 1 ]] && { echo "Usage: ch insolvency <company_number>" >&2; exit 1; }
-    cmd_insolvency "$1"
-    ;;
-  appointments)
-    [[ $# -lt 1 ]] && { echo "Usage: ch appointments <officer_id>" >&2; exit 1; }
-    cmd_appointments "$1"
-    ;;
-  search-officers)
-    [[ $# -lt 1 ]] && { echo "Usage: ch search-officers <name>" >&2; exit 1; }
-    cmd_search_officers "$*"
-    ;;
-  search-disqualified)
-    [[ $# -lt 1 ]] && { echo "Usage: ch search-disqualified <name>" >&2; exit 1; }
-    cmd_search_disqualified "$*"
-    ;;
-  registered-office)
-    [[ $# -lt 1 ]] && { echo "Usage: ch registered-office <company_number>" >&2; exit 1; }
-    cmd_registered_office "$1"
-    ;;
-  help|--help|-h)
-    usage
-    ;;
-  *)
-    echo "Unknown command: $command" >&2
-    usage
-    exit 1
-    ;;
-esac
+    if command not in COMMANDS:
+        print(f"Unknown command: {command}", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        sys.exit(1)
+
+    api_key = load_key()
+    COMMANDS[command](api_key, args)
+
+
+if __name__ == "__main__":
+    main()
