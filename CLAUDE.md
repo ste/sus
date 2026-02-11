@@ -4,7 +4,7 @@ Investigative toolkit for researching suspicious UK companies, corporate network
 
 ## Project Structure
 
-- `bin/ch` — Companies House API wrapper script (curl + jq, no other dependencies)
+- `bin/ch` — Companies House API wrapper script (Python 3 stdlib, no dependencies)
 - `.claude/skills/` — Skills (auto-discovered by Claude Code)
   - `companies-house/` — API query reference for `bin/ch`
   - `company-red-flags/` — Flag patterns (red / orange / yellow)
@@ -19,7 +19,7 @@ Investigative toolkit for researching suspicious UK companies, corporate network
 
 - Query with `bin/ch <command>` — see the `companies-house` skill for full docs
 - API key stored in `.env` as `COMPANIES_HOUSE_API_KEY=...`
-- The script handles auth, pagination, and error handling via curl + jq
+- The script handles auth, pagination, and error handling via Python stdlib
 - Run `bin/ch help` for the full command list
 
 ## Key Conventions
