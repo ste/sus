@@ -51,6 +51,6 @@ For the most interesting connected companies (prioritise those with red flags):
 - Be thorough but efficient — don't expand every branch to full depth if it's clearly legitimate
 - Always explain what you're investigating and why
 - If you hit API rate limits, pause and retry
-- The Companies House MCP tools are your primary data source
+- Use `bin/ch` commands for all Companies House API queries (see the `companies-house` skill for details)
 - Keep a running count of API calls made
 - Save intermediate results so work isn't lost if something fails

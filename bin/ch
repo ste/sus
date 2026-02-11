@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Companies House API wrapper
+# Usage: ch <command> [args...]
+# API key read from .env file (COMPANIES_HOUSE_API_KEY=...)
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+BASE_URL="https://api.company-information.service.gov.uk"
+
+# Load API key
+load_key() {
+  local env_file="$PROJECT_ROOT/.env"
+  if [[ ! -f "$env_file" ]]; then
+    echo "Error: No .env file found at $env_file" >&2
+    echo "Create one with: COMPANIES_HOUSE_API_KEY=your_key_here" >&2
+    exit 1
+  fi
+  COMPANIES_HOUSE_API_KEY=$(grep -E '^COMPANIES_HOUSE_API_KEY=' "$env_file" | cut -d= -f2- | tr -d '"' | tr -d "'")
+  if [[ -z "$COMPANIES_HOUSE_API_KEY" ]]; then
+    echo "Error: COMPANIES_HOUSE_API_KEY not found in .env" >&2
+    exit 1
+  fi
+}
+
+# Make an authenticated GET request
+api_get() {
+  local path="$1"
+  shift
+  local url="${BASE_URL}${path}"
+
+  # Append query params if any
+  if [[ $# -gt 0 ]]; then
+    local params="$1"
+    url="${url}?${params}"
+  fi
+
+  local http_code
+  local response
+  local tmpfile
+  tmpfile=$(mktemp)
+
+  http_code=$(curl -s -w '%{http_code}' -o "$tmpfile" \
+    -u "${COMPANIES_HOUSE_API_KEY}:" \
+    -H "Accept: application/json" \
+    "$url")
+
+  if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+    jq . "$tmpfile" 2>/dev/null || cat "$tmpfile"
+  elif [[ "$http_code" == "404" ]]; then
+    echo "{\"error\": \"not_found\", \"path\": \"$path\"}" >&2
+    rm -f "$tmpfile"
+    return 1
+  elif [[ "$http_code" == "429" ]]; then
+    echo "{\"error\": \"rate_limited\", \"message\": \"Too many requests — wait and retry\"}" >&2
+    rm -f "$tmpfile"
+    return 1
+  else
+    echo "{\"error\": \"api_error\", \"status\": $http_code, \"body\": $(cat "$tmpfile" | jq -R -s '.')}" >&2
+    rm -f "$tmpfile"
+    return 1
+  fi
+
+  rm -f "$tmpfile"
+}
+
+# Paginate through all results for a list endpoint
+api_get_all() {
+  local path="$1"
+  local extra_params="${2:-}"
+  local start=0
+  local page_size=100
+  local all_items="[]"
+
+  while true; do
+    local params="items_per_page=${page_size}&start_index=${start}"
+    if [[ -n "$extra_params" ]]; then
+      params="${params}&${extra_params}"
+    fi
+
+    local result
+    result=$(api_get "$path" "$params") || return 1
+
+    local items
+    items=$(echo "$result" | jq '.items // []')
+    local count
+    count=$(echo "$items" | jq 'length')
+
+    if [[ "$count" -eq 0 ]]; then
+      break
+    fi
+
+    all_items=$(echo "$all_items" "$items" | jq -s '.[0] + .[1]')
+    local total
+    total=$(echo "$result" | jq '.total_results // .total_count // 0')
+
+    start=$((start + count))
+    if [[ "$start" -ge "$total" ]]; then
+      break
+    fi
+  done
+
+  echo "$all_items"
+}
+
+# --- Commands ---
+
+cmd_search() {
+  local query="$1"
+  api_get "/search/companies" "q=$(printf '%s' "$query" | jq -sRr @uri)&items_per_page=20"
+}
+
+cmd_profile() {
+  local number="$1"
+  api_get "/company/$number"
+}
+
+cmd_officers() {
+  local number="$1"
+  local register_type="${2:-}"
+  if [[ "$register_type" == "current" ]]; then
+    api_get_all "/company/$number/officers" "register_type=directors&register_view=true"
+  else
+    api_get_all "/company/$number/officers"
+  fi
+}
+
+cmd_pscs() {
+  local number="$1"
+  api_get_all "/company/$number/persons-with-significant-control"
+}
+
+cmd_filings() {
+  local number="$1"
+  local category="${2:-}"
+  if [[ -n "$category" ]]; then
+    api_get "/company/$number/filing-history" "items_per_page=50&category=$category"
+  else
+    api_get "/company/$number/filing-history" "items_per_page=50"
+  fi
+}
+
+cmd_charges() {
+  local number="$1"
+  api_get_all "/company/$number/charges"
+}
+
+cmd_insolvency() {
+  local number="$1"
+  api_get "/company/$number/insolvency"
+}
+
+cmd_appointments() {
+  local officer_id="$1"
+  api_get_all "/officers/$officer_id/appointments"
+}
+
+cmd_search_officers() {
+  local query="$1"
+  api_get "/search/officers" "q=$(printf '%s' "$query" | jq -sRr @uri)&items_per_page=20"
+}
+
+cmd_search_disqualified() {
+  local query="$1"
+  api_get "/search/disqualified-officers" "q=$(printf '%s' "$query" | jq -sRr @uri)&items_per_page=20"
+}
+
+cmd_registered_office() {
+  local number="$1"
+  api_get "/company/$number/registered-office-address"
+}
+
+# --- Main ---
+
+usage() {
+  cat <<'USAGE'
+Usage: ch <command> [args...]
+
+Commands:
+  search <query>                  Search for companies by name/number
+  profile <number>                Get company profile
+  officers <number> [current]     List officers (optionally current only)
+  pscs <number>                   List persons with significant control
+  filings <number> [category]     Get filing history (categories: accounts, confirmation-statement, etc.)
+  charges <number>                Get charges/mortgages
+  insolvency <number>             Get insolvency information
+  appointments <officer_id>       Get all appointments for an officer
+  search-officers <name>          Search for officers by name
+  search-disqualified <name>      Search disqualified officers
+  registered-office <number>      Get registered office address
+
+API key is read from .env file (COMPANIES_HOUSE_API_KEY=...)
+USAGE
+}
+
+if [[ $# -lt 1 ]]; then
+  usage
+  exit 1
+fi
+
+command="$1"
+shift
+
+# Help doesn't need an API key
+if [[ "$command" == "help" || "$command" == "--help" || "$command" == "-h" ]]; then
+  usage
+  exit 0
+fi
+
+load_key
+
+case "$command" in
+  search)
+    [[ $# -lt 1 ]] && { echo "Usage: ch search <query>" >&2; exit 1; }
+    cmd_search "$*"
+    ;;
+  profile)
+    [[ $# -lt 1 ]] && { echo "Usage: ch profile <company_number>" >&2; exit 1; }
+    cmd_profile "$1"
+    ;;
+  officers)
+    [[ $# -lt 1 ]] && { echo "Usage: ch officers <company_number> [current]" >&2; exit 1; }
+    cmd_officers "$1" "${2:-}"
+    ;;
+  pscs)
+    [[ $# -lt 1 ]] && { echo "Usage: ch pscs <company_number>" >&2; exit 1; }
+    cmd_pscs "$1"
+    ;;
+  filings)
+    [[ $# -lt 1 ]] && { echo "Usage: ch filings <company_number> [category]" >&2; exit 1; }
+    cmd_filings "$1" "${2:-}"
+    ;;
+  charges)
+    [[ $# -lt 1 ]] && { echo "Usage: ch charges <company_number>" >&2; exit 1; }
+    cmd_charges "$1"
+    ;;
+  insolvency)
+    [[ $# -lt 1 ]] && { echo "Usage: ch insolvency <company_number>" >&2; exit 1; }
+    cmd_insolvency "$1"
+    ;;
+  appointments)
+    [[ $# -lt 1 ]] && { echo "Usage: ch appointments <officer_id>" >&2; exit 1; }
+    cmd_appointments "$1"
+    ;;
+  search-officers)
+    [[ $# -lt 1 ]] && { echo "Usage: ch search-officers <name>" >&2; exit 1; }
+    cmd_search_officers "$*"
+    ;;
+  search-disqualified)
+    [[ $# -lt 1 ]] && { echo "Usage: ch search-disqualified <name>" >&2; exit 1; }
+    cmd_search_disqualified "$*"
+    ;;
+  registered-office)
+    [[ $# -lt 1 ]] && { echo "Usage: ch registered-office <company_number>" >&2; exit 1; }
+    cmd_registered_office "$1"
+    ;;
+  help|--help|-h)
+    usage
+    ;;
+  *)
+    echo "Unknown command: $command" >&2
+    usage
+    exit 1
+    ;;
+esac

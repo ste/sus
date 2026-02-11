@@ -1,27 +1,31 @@
 # sus — Investigation Toolkit
 
-This is an investigative toolkit for researching suspicious companies, corporate networks, and links between entities. Primarily focused on UK companies via Companies House, but extensible to other data sources.
+Investigative toolkit for researching suspicious UK companies, corporate networks, and links between entities.
 
 ## Project Structure
 
-- `.claude/skills/` — Investigation skills (auto-discovered)
+- `bin/ch` — Companies House API wrapper script (curl + jq, no other dependencies)
+- `.claude/skills/` — Skills (auto-discovered by Claude Code)
+  - `companies-house/` — API query reference for `bin/ch`
+  - `company-red-flags/` — Red flag patterns and severity ratings
+  - `investigation-viz/` — vis.js visualisation conventions
 - `.claude/agents/` — Autonomous investigation agents
-- `data/` — Local investigation data (gitignored, may contain large/sensitive files)
-- `output/` — Generated reports, visualisations, diagrams (gitignored)
+  - `company-spider.md` — Recursive company network mapper
+- `data/` — Local investigation data (gitignored)
+- `output/` — Generated reports, visualisations, JSON (gitignored)
+- `.env` — API key storage (gitignored)
 
-## Available MCP Tools
+## Companies House API
 
-- **Companies House** — Search companies, get profiles, officers, PSCs, find links between companies
+- Query with `bin/ch <command>` — see the `companies-house` skill for full docs
+- API key stored in `.env` as `COMPANIES_HOUSE_API_KEY=...`
+- The script handles auth, pagination, and error handling via curl + jq
+- Run `bin/ch help` for the full command list
 
 ## Key Conventions
 
-- All visualisations should be self-contained HTML files saved to `output/`
+- All visualisations are self-contained HTML files saved to `output/`
 - Use vis.js for interactive network graphs (loaded from CDN)
-- Use Mermaid only for simple/small diagrams
-- Flag red flags explicitly in output with severity (high/medium/low)
-- When investigating, always explain what you're doing and why — this is forensic work, show your reasoning
-- Save structured investigation data as JSON in `output/` alongside any visualisations
-
-## Future Integration
-
-- Corpus digger tools for large document analysis (Epstein files, leaked docs, etc.) — to be integrated from existing work
+- Save structured investigation data as JSON in `output/` alongside visualisations
+- Flag red flags explicitly with severity (HIGH / MEDIUM / LOW)
+- When investigating, explain what you're doing and why — this is forensic work, show your reasoning
