@@ -31,10 +31,10 @@ All visualisations go to the `output/` directory as self-contained HTML files.
 - **PSC / significant control** — solid red arrow (with ownership % as label)
 - **Registered office match** — dotted grey line
 
-### Red Flag Indicators
-- Nodes with red flags get a red glow/border
+### Flag Indicators
+- Nodes with flags get a coloured glow/border matching severity (red / orange / yellow)
 - Tooltip on hover shows the specific flags
-- A summary panel lists all flags found with severity
+- A summary panel lists all flags found with colour
 
 ## HTML Template Requirements
 
@@ -43,7 +43,7 @@ All visualisations go to the `output/` directory as self-contained HTML files.
 - Include a sidebar or panel with:
   - Investigation summary
   - List of all entities found
-  - Red flags with severity
+  - Flags with colour (red / orange / yellow)
   - Clickable list that highlights nodes in the graph
 - Graph should be zoomable and pannable
 - Clicking a node shows its details
@@ -74,7 +74,7 @@ Always save the raw investigation data as a JSON file alongside the HTML:
     {
       "entity": "...",
       "flag": "...",
-      "severity": "HIGH|MEDIUM|LOW",
+      "severity": "RED|ORANGE|YELLOW",
       "evidence": "..."
     }
   ]

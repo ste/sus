@@ -42,7 +42,7 @@ output/                — Generated reports and visualisations (gitignored)
 Skills are knowledge that Claude loads on demand. They teach Claude *how* to do something without needing to learn it from scratch each session.
 
 - **companies-house** — Documents every `bin/ch` command, response formats, and common investigation patterns
-- **company-red-flags** — Catalogue of red flags (shell company indicators, officer patterns, PSC flags, filing anomalies, network-level flags) with severity ratings
+- **company-red-flags** — Catalogue of flags colour-coded by severity (red / orange / yellow) covering shell company indicators, officer patterns, PSC flags, filing anomalies, and network-level flags
 - **investigation-viz** — Conventions for generating self-contained HTML visualisations with vis.js (node/edge colours, sidebar layout, companion JSON)
 
 ### Agents

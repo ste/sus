@@ -7,7 +7,7 @@ Investigative toolkit for researching suspicious UK companies, corporate network
 - `bin/ch` — Companies House API wrapper script (curl + jq, no other dependencies)
 - `.claude/skills/` — Skills (auto-discovered by Claude Code)
   - `companies-house/` — API query reference for `bin/ch`
-  - `company-red-flags/` — Red flag patterns and severity ratings
+  - `company-red-flags/` — Flag patterns (red / orange / yellow)
   - `investigation-viz/` — vis.js visualisation conventions
 - `.claude/agents/` — Autonomous investigation agents
   - `company-spider.md` — Recursive company network mapper
@@ -27,5 +27,5 @@ Investigative toolkit for researching suspicious UK companies, corporate network
 - All visualisations are self-contained HTML files saved to `output/`
 - Use vis.js for interactive network graphs (loaded from CDN)
 - Save structured investigation data as JSON in `output/` alongside visualisations
-- Flag red flags explicitly with severity (HIGH / MEDIUM / LOW)
+- Flag issues by colour: red (serious), orange (notable), yellow (minor)
 - When investigating, explain what you're doing and why — this is forensic work, show your reasoning
