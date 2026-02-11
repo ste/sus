@@ -1,0 +1,17 @@
+# Investigation data (may be large/sensitive)
+data/
+output/
+
+# OS
+.DS_Store
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Claude Code
+.claude/settings.local.json
